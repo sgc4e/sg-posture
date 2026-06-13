@@ -25,9 +25,13 @@ the AirPods. The app:
 Needs Xcode Command Line Tools (Swift). No full Xcode required.
 
 ```bash
-bash build-app.sh        # compiles, bundles, ad-hoc signs SGPosture.app
-open SGPosture.app
+bash build-app.sh          # compile, bundle, sign, install to /Applications, relaunch
+INSTALL=0 bash build-app.sh  # compile only, do not install
 ```
+
+`build-app.sh` installs the fresh build into `/Applications/SGPosture.app` and relaunches
+it so the update takes effect. Launch it any time from Spotlight (type "SGPosture"),
+Launchpad, or `open /Applications/SGPosture.app`.
 
 > Always launch `SGPosture.app`, never `.build/release/SGPosture` directly. The raw
 > binary has no `Info.plist`, so macOS aborts it the moment it touches motion data. The
