@@ -82,9 +82,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManag
             self?.flush()
             self?.deliverEODReportIfDue()
         }
+
+        // Self-test: launch with `--selftest` (via `open --args`) to show an overlay
+        // and, after it dismisses, write proof the app is still alive to
+        // /tmp/sgposture_selftest.txt. Verifies it no longer quits when its last
+        // window closes. Must run via `open` so it has full bundle context.
+        if CommandLine.arguments.contains("--selftest")
+            || ProcessInfo.processInfo.environment["SGPOSTURE_SELFTEST"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.nudgeOverlay.show() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+                try? "ALIVE after overlay show+dismiss\n".write(toFile: "/tmp/sgposture_selftest.txt",
+                                                               atomically: true, encoding: .utf8)
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     func applicationWillTerminate(_ note: Notification) { flush(force: true) }
+
+    // This is a menu-bar app: it must NOT quit when a transient overlay window
+    // (nudge countdown / calibration panel) closes. Without this, the app exits
+    // the moment a nudge's overlay dismisses.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func buildMenu() {
         statusLine = disabled("Posture: starting…")
