@@ -1,4 +1,24 @@
+# Build artifacts
 .build/
 *.app/
-.DS_Store
 .swiftpm/
+.DS_Store
+
+# Secrets & credentials — never commit
+*.env
+.env*
+*secret*
+*secrets*
+*token*
+*credentials*
+*.pem
+*.key
+id_rsa*
+roam*.json
+config.local.json
+
+# Local data, logs, exports (e.g. posture history)
+posture-log.json
+*posture-log*.json
+reports/
+*.log
