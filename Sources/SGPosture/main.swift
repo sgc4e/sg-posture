@@ -39,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManag
 
     // live state
     var hasData = false
+    var sampleCount = 0
+    var motionStarted = false
     var seeded = false
     var smoothedPitch: Double = 0
     var baseline: Double?
@@ -74,8 +76,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManag
 
         loadLog()
         motion.delegate = self
-        FileHandle.standardError.write(Data("[SGPosture] launch. motionAvailable=\(motion.isDeviceMotionAvailable) auth=\(CMHeadphoneMotionManager.authorizationStatus().rawValue)\n".utf8))
+        let bootDiag = "launch motionAvailable=\(motion.isDeviceMotionAvailable) auth=\(CMHeadphoneMotionManager.authorizationStatus().rawValue)\n"
+        FileHandle.standardError.write(Data(("[SGPosture] " + bootDiag).utf8))
+        let diagURL = supportDir.appendingPathComponent("last-launch.txt")
+        try? bootDiag.write(to: diagURL, atomically: true, encoding: .utf8)
+        var diagTicks = 0
+        Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] t in
+            guard let self else { t.invalidate(); return }
+            diagTicks += 1
+            let line = bootDiag + "t+\(diagTicks * 3)s active=\(self.motion.isDeviceMotionActive) samples=\(self.sampleCount) avail=\(self.motion.isDeviceMotionAvailable) auth=\(CMHeadphoneMotionManager.authorizationStatus().rawValue) hasData=\(self.hasData)\n"
+            try? line.write(to: diagURL, atomically: true, encoding: .utf8)
+            if diagTicks >= 200 { t.invalidate() }
+        }
         startMotion()
+
+        // Motion health-check: re-subscribe when a capable device is present but no
+        // samples are arriving (covers permission-just-granted, AirPods just worn,
+        // reconnect). stop-before-start in startMotion() keeps it to one handler.
+        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if self.motion.isDeviceMotionAvailable {
+                if !self.motionStarted { self.startMotion() }
+            } else if self.state != .noMotion {
+                self.state = .noMotion; self.render()
+            }
+        }
 
         // Periodically persist the log and check whether the EOD report is due.
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -135,11 +160,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManag
         guard motion.isDeviceMotionAvailable else {
             state = .noMotion
             render()
-            // AirPods may connect after launch — keep polling.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.startMotion() }
             return
         }
         if state == .noMotion { state = baseline == nil ? .uncalibrated : .good }
+        // Subscribe exactly once per connection. Calling startDeviceMotionUpdates
+        // repeatedly stacks handlers (which over-counted time); and stopping before
+        // each start was preventing the stream from ever going active. Reset the
+        // flag only on disconnect.
+        guard !motionStarted else { render(); return }
+        motionStarted = true
         motion.startDeviceMotionUpdates(to: .main) { [weak self] m, _ in
             guard let self, let m else { return }
             self.handle(m)
@@ -151,6 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManag
         if !seeded { smoothedPitch = pitch; seeded = true }
         else { smoothedPitch += (pitch - smoothedPitch) * kSmoothing }
         hasData = true
+        sampleCount += 1
         if calibrating { calibrationOverlay.update(pitch: m.attitude.pitch, roll: m.attitude.roll) }
         evaluate()
         // Count worn time: add the gap since the last sample to the current state,
@@ -255,6 +285,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManag
     func headphoneMotionManagerDidDisconnect(_ manager: CMHeadphoneMotionManager) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.motion.stopDeviceMotionUpdates()
+            self.motionStarted = false   // allow a fresh single subscribe on reconnect
             self.hasData = false; self.seeded = false; self.slouchSince = nil
             self.lastSample = nil
             self.state = .noMotion
@@ -353,7 +385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManag
         default: break
         }
         if !motion.isDeviceMotionAvailable { return "No motion AirPods detected (needs Pro / 3 / 4 / Max)" }
-        if !hasData { return "AirPods found — move your head to start streaming" }
+        if !hasData { return "No motion yet — wear AirPods + play Mac audio through them" }
         return "AirPods connected"
     }
 
