@@ -29,7 +29,8 @@ enum PostureState { case noMotion, uncalibrated, good, slight, slouch }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManagerDelegate {
 
-    let motion = CMHeadphoneMotionManager()
+    var motion = CMHeadphoneMotionManager()
+    var lastResub = Date.distantPast
     var statusItem: NSStatusItem!
     let menu = NSMenu()
     let nudgeOverlay = NudgeOverlay()
@@ -96,7 +97,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManag
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             guard let self else { return }
             if self.motion.isDeviceMotionAvailable {
-                if !self.motionStarted { self.startMotion() }
+                if !self.motionStarted {
+                    self.startMotion()
+                } else {
+                    // Subscribed but no samples for a while = stream went silent
+                    // (AirPods idled without a disconnect). Rebuild to recover. Throttled.
+                    let stale = self.lastSample == nil || Date().timeIntervalSince(self.lastSample!) > 8
+                    if stale && Date().timeIntervalSince(self.lastResub) > 15 { self.resubscribe() }
+                }
             } else if self.state != .noMotion {
                 self.state = .noMotion; self.render()
             }
@@ -173,6 +181,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, CMHeadphoneMotionManag
             guard let self, let m else { return }
             self.handle(m)
         }
+    }
+
+    /// Rebuild the motion manager from scratch. Recovers when the subscription
+    /// goes silent without a disconnect event (AirPods idle, then re-worn) — the
+    /// case where "subscribe once" would otherwise stay stuck forever.
+    func resubscribe() {
+        lastResub = Date()
+        motion.stopDeviceMotionUpdates()
+        motion.delegate = nil
+        motion = CMHeadphoneMotionManager()
+        motion.delegate = self
+        motionStarted = false
+        lastSample = nil
+        startMotion()
     }
 
     func handle(_ m: CMDeviceMotion) {
